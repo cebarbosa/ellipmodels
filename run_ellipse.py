@@ -141,6 +141,7 @@ def run_ellipse_fixed_geom(group, plot=True):
                 ax.add_artist(ell)
         plt.colorbar(im)
         plt.title(group)
+        plt.savefig("sigres.png")
         plt.show(block=True)
     ###########################################################################
     # Saving images
