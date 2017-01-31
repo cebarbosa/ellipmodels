@@ -14,6 +14,7 @@ import pyfits as pf
 import astropy.units as u
 from astropy.io.ascii import SExtractor
 from astropy.coordinates import SkyCoord
+from astropy.stats import sigma_clip
 import matplotlib.pyplot as plt
 
 def prepare_input_first_interaction(group):
@@ -31,7 +32,7 @@ def prepare_input_first_interaction(group):
     # Filling header parameters
     fields = [galfit_guide(),
               "# IMAGE and GALFIT CONTROL PARAMETER",
-              "A) {}".format(rband), "B) imgblock00.fits", "C) none",
+              "A) {}".format(rband), "B) imgblock.fits", "C) none",
                  "D) none", "E) 1", "F) mask.fits", "G) none"]
     h = pf.getheader(rband)
     xdim = h["NAXIS1"]
@@ -40,14 +41,21 @@ def prepare_input_first_interaction(group):
     ps_y = np.sqrt(h['CD2_1'] ** 2. + h['CD2_2'] ** 2.) * 3600
     exptime = h["EXPTIME"]
     ncombine = h["NCOMBINE"]
+    ###########################################################################
+    # Update gain keyword
+    if "GAIN" not in h.keys():
+        d = pf.getdata(rband)
+        h["GAIN"] = h["CCDSENS"]
+        pf.writeto(rband, d, h, clobber=True)
+    ###########################################################################
     fields.append("H) 1 {} 1 {} # xmin xmax ymin ymax".format(xdim, ydim))
     fields.append("I) 100 100")
-    fields.append("J) {}".format(zps[group] + 25  - 2.5 * np.log10(exptime * ncombine)))
+    fields.append("J) {}".format(zps[group] + 25. - 2.5 * np.log10(exptime/ncombine)))
     fields.append("K {:.3f} {:.3f} # Plate scale (dx dy)   [arcsec per pixel]".format(
                    ps_x, ps_y))
     fields.append("O) regular # Display type (regular, curses, both)")
     fields.append("P) 0 # Options: 0=normal run; 1,2=make model/imgblock & quit")
-    fields.append("U) 0 # Non-parametric component")
+    fields.append("U) 1 # Non-parametric component")
     fields.append("V) 0 # MultiNest")
     fields.append("W) default # output options")
     ###########################################################################
@@ -84,19 +92,32 @@ def prepare_input_first_interaction(group):
         comp.append("\n")
         components += comp
     ###########################################################################
+    # Add simple sky
+    sky = ["#" * 78, " # Sky component", " 0) sky"]
+    data = pf.getdata(rband)
+    skyval =  np.median(sigma_clip(data))
+    sky.append(" 1) {:.1f} 1 # sky background [ADU counts]".format(skyval))
+    sky.append(" 2) 0.000      0       # dsky/dx (sky gradient in x)")
+    sky.append(" 3) 0.000      0       # dsky/dy (sky gradient in y)")
+    sky.append(" Z) 0  #  Skip this model in output image?  (yes=1, no=0)")
+    ###########################################################################
+    # Saving to file
     with open("galfit00.txt", "w") as f:
         f.write("\n".join(fields) + "\n\n")
         f.write("\n".join(components))
+        f.write("\n".join(sky))
     return
 
 def galfit_guide():
-    return """================================================================================
+    return """
+================================================================================
 # GUIDE TO INPUT FILE FOR GALFITM (a product of the MegaMorph project)
 Including multi-band fitting, non-parametric component and MultiNest sampling.
 CSL = comma separated list (must not contain any whitespace)
 Where several lines are given for the same letter code, these are alternative
 examples. The behaviour for multiple lines with the same letter is undefined.
-================================================================================ """
+================================================================================
+"""
 
 
 
@@ -110,7 +131,7 @@ if __name__ == "__main__":
         wdir = os.path.join(data_dir, group)
         os.chdir(wdir)
         prepare_input_first_interaction(group)
-        call(["{}/bin/galfitm-1.2.1-linux-x86_64".format(main_dir), "-o2",
+        call(["{}/bin/galfitm-1.2.1-linux-x86_64".format(main_dir),
               "galfit00.txt"])
         call(["ds9", "-scale", "mode", "99.", "-multiframe", "imgblock00.fits"])
         break
